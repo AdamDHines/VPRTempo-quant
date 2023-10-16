@@ -34,14 +34,13 @@ sys.path.append('./output')
 sys.path.append('./dataset')
 
 import blitnet as bn
+import utils as ut
 import numpy as np
 import torch.nn as nn
-import torch.quantization as quantization
 
 from settings import configure, image_csv, model_logger
 from dataset import CustomImageDataset, ProcessImage
 from torch.utils.data import DataLoader
-from torch.ao.quantization import QuantStub, DeQuantStub
 from tqdm import tqdm
 
 class VPRTempo(nn.Module):
@@ -52,14 +51,7 @@ class VPRTempo(nn.Module):
         configure(self)
         
         # Define the images to load (both training and inference)
-        image_csv(self)
-
-        # Add quantization stubs for Quantization Aware Training (QAT)
-        self.quant = QuantStub()
-        self.dequant = DeQuantStub()
-        
-        # Define the add function for quantized addition
-        self.add = nn.quantized.FloatFunctional()      
+        image_csv(self)     
 
         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
@@ -230,9 +222,7 @@ class VPRTempo(nn.Module):
         - Tensor: Output after processing.
         """
         
-        spikes = self.quant(spikes)
-        spikes = self.add.add(layer.exc(spikes), layer.inh(spikes))
-        spikes = self.dequant(spikes)
+        spikes = layer.exc(spikes) + layer.inh(spikes)
         
         return spikes
     
@@ -257,7 +247,7 @@ def generate_model_name(model):
             str(model.input) +
             str(model.feature) +
             str(model.output) +
-            str(model.number_modules) +
+            str(model.number_modules)+
             '.pth')
 
 def check_pretrained_model(model_name):
@@ -270,7 +260,7 @@ def check_pretrained_model(model_name):
         return retrain == 'n'
     return False
 
-def train_new_model(model, model_name, qconfig):
+def train_new_model(model, model_name):
     """
     Train a new model.
 
@@ -295,10 +285,6 @@ def train_new_model(model, model_name, qconfig):
     # Set the model to training mode and move to device
     model.train()
     model.to('cpu')
-    model.qconfig = qconfig
-
-    # Apply quantization configurations to the model
-    model = quantization.prepare_qat(model, inplace=False)
 
     # Keep track of trained layers to pass data through them
     trained_layers = [] 
@@ -312,13 +298,12 @@ def train_new_model(model, model_name, qconfig):
         model.train_model(train_loader, layer, prev_layers=trained_layers)
         # After training the current layer, add it to the list of trained layers
         trained_layers.append(layer_name)
-    # Convert the model to a quantized model
-    model = quantization.convert(model, inplace=False)
+    # Convert the model to eval
     model.eval()
     # Save the model
     model.save_model(os.path.join('./models', model_name))    
 
-def run_inference(model, model_name, qconfig):
+def run_inference(model_name):
     """
     Run inference on a pre-trained model.
 
@@ -326,6 +311,11 @@ def run_inference(model, model_name, qconfig):
     :param model_name: Name of the model to load
     :param qconfig: Quantization configuration
     """
+    # Set the model to evaluation mode and set configuration
+    model = VPRTempo()
+    model.model_logger()
+    model.eval()
+
     # Initialize the image transforms and datasets
     image_transform = ProcessImage(model.dims, model.patches)
     test_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
@@ -339,18 +329,7 @@ def run_inference(model, model_name, qconfig):
                              shuffle=False,
                              num_workers=8,
                              persistent_workers=True)
-    # Set the model to evaluation mode and set configuration
-    model = VPRTempo()
-    model.model_logger()
-    model.eval()
-    model.qconfig = qconfig
-
-    # Apply quantization configurations to all layers in layer_dict
-    for layer_name, _ in model.layer_dict.items():
-        getattr(model, layer_name).qconfig = qconfig
-    # Prepare and convert the model to a quantized model
-    model = quantization.prepare(model, inplace=False)
-    model = quantization.convert(model, inplace=False)
+    
     # Load the model
     model.load_model(os.path.join('./models', model_name))
 
@@ -360,21 +339,23 @@ def run_inference(model, model_name, qconfig):
     # Use evaluate method for inference accuracy
     model.evaluate(model, test_loader, layers=layer_names)
 
+    return model
+
 if __name__ == "__main__":
     # Set the number of threads for PyTorch
-    #torch.set_num_threads(8)
+    torch.set_num_threads(8)
     # Initialize the model
     model = VPRTempo()
-    # Initialize the logger
-    model.model_logger()
-    # Set the quantization configuration
-    qconfig = quantization.get_default_qat_qconfig('fbgemm')
     # Generate the model name
     model_name = generate_model_name(model)
     # Check if a pre-trained model exists
     use_pretrained = check_pretrained_model(model_name)
     # Train or run inference based on the user's input
     if not use_pretrained:
-        train_new_model(model, model_name, qconfig) # Training
+        train_new_model(model, model_name) # Training
     with torch.no_grad():    
-        run_inference(model, model_name, qconfig) # Inference
+        model = run_inference(model_name) # Inference
+    # Calculate full metrics if validation in settings is set to True
+    if model.validation:
+        validate = ut.validate(model)
+        validate()
