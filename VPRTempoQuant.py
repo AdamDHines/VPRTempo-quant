@@ -45,9 +45,9 @@ from torch.utils.data import DataLoader
 from torch.ao.quantization import QuantStub, DeQuantStub
 from tqdm import tqdm
 
-class VPRTempo(nn.Module):
+class VPRTempoQuant(nn.Module):
     def __init__(self):
-        super(VPRTempo, self).__init__()
+        super(VPRTempoQuant, self).__init__()
 
         # Configure the network
         configure(self)
@@ -133,17 +133,17 @@ class VPRTempo(nn.Module):
         """
 
         # Initialize the tqdm progress bar
-        pbar = tqdm(total=int(self.T * self.epoch),
+        pbar = tqdm(total=int(self.T),
                     desc="Training ",
                     position=0)
         
         # Initialize the learning rates for each layer (used for annealment)
         init_itp = layer.eta_ip.detach()
         init_stdp = layer.eta_stdp.detach()
-        
+        mod = 0  # Used to determine the learning rate annealment
         # Run training for the specified number of epochs
         for epoch in range(self.epoch):
-            mod = 0  # Used to determine the learning rate annealment, resets at each epoch
+            #mod = 0  # Used to determine the learning rate annealment, resets at each epoch
             # Run training for the specified number of timesteps
             for spikes, labels in train_loader:
                 spikes, labels = spikes.to(self.device), labels.to(self.device)
@@ -178,7 +178,7 @@ class VPRTempo(nn.Module):
             torch.cuda.empty_cache()
             gc.collect()
 
-    def evaluate(self, model, test_loader, layers=None):
+    def evaluate(self, test_loader, layers=None):
         """
         Run the inferencing model and calculate the accuracy.
 
@@ -188,6 +188,7 @@ class VPRTempo(nn.Module):
 
         # Initialize the number of correct predictions
         numcorr = 0
+        idxcorr = []
         idx = 0
             
         # Initialize the tqdm progress bar
@@ -209,7 +210,7 @@ class VPRTempo(nn.Module):
             # Evaluate if the prediction is correct
             if torch.argmax(spikes.reshape(1, self.number_training_images)) == idx:
                 numcorr += 1
-
+                idxcorr.append(idx)
             # Update the index and progress bar
             idx += 1
             pbar.update(1)
@@ -218,7 +219,8 @@ class VPRTempo(nn.Module):
         pbar.close()
         # Calculate and record the accuracy
         accuracy = round((numcorr/self.number_testing_images)*100,2)
-        model.logger.info("P@100R: "+ str(accuracy) + '%')
+
+        return numcorr, idxcorr
 
     def forward(self, spikes, layer):
         """
@@ -254,12 +256,11 @@ def generate_model_name(model):
     """
     Generate the model name based on its parameters.
     """
-    return ("VPRTempo" +
+    return ("VPRTempoQuant" +
             str(model.input) +
             str(model.feature) +
             str(model.output) +
             str(model.number_modules) +
-            "Quantized"+
             '.pth')
 
 def check_pretrained_model(model_name):
@@ -292,7 +293,7 @@ def train_new_model(model, model_name, qconfig):
     train_loader = DataLoader(train_dataset, 
                               batch_size=1, 
                               shuffle=False,
-                              num_workers=8,
+                              num_workers=4,
                               persistent_workers=True)
     # Set the model to training mode and move to device
     model.train()
@@ -329,7 +330,7 @@ def run_inference(model_name, qconfig):
     :param qconfig: Quantization configuration
     """
     # Set the model to evaluation mode and set configuration
-    model = VPRTempo()
+    model = VPRTempoQuant()
     model.model_logger()
     model.eval()
     model.qconfig = qconfig
@@ -345,7 +346,7 @@ def run_inference(model_name, qconfig):
     test_loader = DataLoader(test_dataset, 
                              batch_size=1, 
                              shuffle=False,
-                             num_workers=8,
+                             num_workers=4,
                              persistent_workers=True)
 
     # Apply quantization configurations to all layers in layer_dict
@@ -367,9 +368,9 @@ def run_inference(model_name, qconfig):
 
 if __name__ == "__main__":
     # Set the number of threads for PyTorch
-    torch.set_num_threads(8)
+    torch.set_num_threads(4)
     # Initialize the model
-    model = VPRTempo()
+    model = VPRTempoQuant()
     # Set the quantization configuration
     qconfig = quantization.get_default_qat_qconfig('fbgemm')
     # Generate the model name

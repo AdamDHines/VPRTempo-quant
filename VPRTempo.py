@@ -124,17 +124,17 @@ class VPRTempo(nn.Module):
         """
 
         # Initialize the tqdm progress bar
-        pbar = tqdm(total=int(self.T * self.epoch),
+        pbar = tqdm(total=int(self.T),
                     desc="Training ",
                     position=0)
         
         # Initialize the learning rates for each layer (used for annealment)
         init_itp = layer.eta_ip.detach()
         init_stdp = layer.eta_stdp.detach()
-        
+        mod = 0  # Used to determine the learning rate annealment
         # Run training for the specified number of epochs
         for epoch in range(self.epoch):
-            mod = 0  # Used to determine the learning rate annealment, resets at each epoch
+            #mod = 0  # Used to determine the learning rate annealment, resets at each epoch
             # Run training for the specified number of timesteps
             for spikes, labels in train_loader:
                 spikes, labels = spikes.to(self.device), labels.to(self.device)
@@ -169,7 +169,7 @@ class VPRTempo(nn.Module):
             torch.cuda.empty_cache()
             gc.collect()
 
-    def evaluate(self, model, test_loader, layers=None):
+    def evaluate(self, test_loader, layers=None):
         """
         Run the inferencing model and calculate the accuracy.
 
@@ -179,6 +179,7 @@ class VPRTempo(nn.Module):
 
         # Initialize the number of correct predictions
         numcorr = 0
+        numcorridx = []
         idx = 0
             
         # Initialize the tqdm progress bar
@@ -200,6 +201,7 @@ class VPRTempo(nn.Module):
             # Evaluate if the prediction is correct
             if torch.argmax(spikes.reshape(1, self.number_training_images)) == idx:
                 numcorr += 1
+                numcorridx.append(idx)
 
             # Update the index and progress bar
             idx += 1
@@ -209,7 +211,8 @@ class VPRTempo(nn.Module):
         pbar.close()
         # Calculate and record the accuracy
         accuracy = round((numcorr/self.number_testing_images)*100,2)
-        model.logger.info("P@100R: "+ str(accuracy) + '%')
+
+        return numcorr, numcorridx
 
     def forward(self, spikes, layer):
         """
@@ -337,7 +340,7 @@ def run_inference(model_name):
     layer_names = list(model.layer_dict.keys())
 
     # Use evaluate method for inference accuracy
-    model.evaluate(model, test_loader, layers=layer_names)
+    model.evaluate(test_loader, layers=layer_names)
 
     return model
 
