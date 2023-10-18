@@ -160,34 +160,35 @@ class ProcessImage:
 
 class CustomImageDataset(Dataset):
     def __init__(self, annotations_file, img_dirs, transform=None, target_transform=None, 
-                 skip=1, max_samples=None, test=True):
+                 skip=1, max_samples=None, max_samples_per_module=None, test=True):
         self.transform = transform
         self.target_transform = target_transform
         self.skip = skip
         
-        # Load image labels from each directory, apply the skip and max_samples, and concatenate
-        self.img_labels = []
-        for img_dir in img_dirs:
+        all_datasets = []
 
+        # Load all datasets and apply skip and max_samples immediately
+        for img_dir in img_dirs:
             img_labels = pd.read_csv(annotations_file)
             img_labels['file_path'] = img_labels.apply(lambda row: os.path.join(img_dir, row.iloc[0]), axis=1)
-            
-            # Select specific rows based on the skip parameter
             img_labels = img_labels.iloc[::skip]
-            
-            # Limit the number of samples to max_samples if specified
             if max_samples is not None:
                 img_labels = img_labels.iloc[:max_samples]
-            
-            # Determine if the images being fed are training or testing
-            if test:
-                self.img_labels = img_labels
-            else:
-                self.img_labels.append(img_labels)
-        
-        if isinstance(self.img_labels,list):
-            # Concatenate all the DataFrames
-            self.img_labels = pd.concat(self.img_labels, ignore_index=True)
+            all_datasets.append(img_labels)
+
+        # Reorganize the order based on max_samples_per_module
+        reordered_datasets = []
+        datasets_length = len(all_datasets[0])
+        num_iterations = datasets_length // max_samples_per_module
+
+        for i in range(num_iterations):
+            start_idx = i * max_samples_per_module
+            end_idx = start_idx + max_samples_per_module
+            for dataset in all_datasets:
+                reordered_datasets.append(dataset.iloc[start_idx:end_idx])
+
+        # Combine all reordered datasets
+        self.img_labels = pd.concat(reordered_datasets, ignore_index=True)
         
     def __len__(self):
         return len(self.img_labels)

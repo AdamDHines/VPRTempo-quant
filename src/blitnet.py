@@ -49,8 +49,8 @@ class SNNLayer(nn.Module):
         # Configure the network
         configure(self) # Sets the testing configuration
         # Device
-        #self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        self.device = torch.device("cpu")
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        #self.device = torch.device("cpu")
         
         # Check constraints etc
         if np.isscalar(thr_range): thr_range = [thr_range, thr_range]
@@ -105,8 +105,8 @@ class SNNLayer(nn.Module):
     def addWeights(self,W_range=[0,0],p=[0,0],dims=[0,0]):
 
         # Get torch device
-       #device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")    
-        device = torch.device("cpu") 
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")    
+        #device = torch.device("cpu") 
     
         # Check constraints etc
         if np.isscalar(W_range): W_range = [W_range,W_range]
@@ -166,7 +166,7 @@ def calc_stdp(prespike, spikes, noclp, layer, idx, prev_layer=None):
         shape = layer.exc.weight.data.shape
         
         # Get the output neuron index
-        idx_sel = torch.arange(int(idx[0]), int(idx[0]) + 1, 
+        idx_sel = torch.arange(int(idx), int(idx) + 1, 
                                device=layer.device, 
                                dtype=int)
 
@@ -191,6 +191,8 @@ def calc_stdp(prespike, spikes, noclp, layer, idx, prev_layer=None):
                                        layer.eta_stdp).T
         layer.inh.weight.data += ((-pre * post * layer.havconnInh.T) * 
                                        (layer.eta_stdp * -1)).T
+        
+        del xdiff
 
     # Normal STDP
     else:
@@ -212,9 +214,12 @@ def calc_stdp(prespike, spikes, noclp, layer, idx, prev_layer=None):
     layer.exc.weight.data[layer.exc.weight.data < 0] = 1e-06
     layer.inh.weight.data[layer.inh.weight.data > 0] = -1e-06
     
-    # Remove negative weights for excW and positive for inhW
-    layer.exc.weight.data[layer.havconnExc] = layer.exc.weight.data[layer.havconnExc].clamp(min=1e-06, max=10)
-    layer.inh.weight.data[layer.havconnInh] = layer.inh.weight.data[layer.havconnInh].clamp(min=-10, max=-1e-06)
+    # For excitatory weights
+    layer.exc.weight.data[layer.havconnExc] = torch.clamp(layer.exc.weight.data[layer.havconnExc], min=1e-06, max=10)
+
+    # For inhibitory weights
+    layer.inh.weight.data[layer.havconnInh] = torch.clamp(layer.inh.weight.data[layer.havconnInh], min=-10, max=-1e-06)
+
 
     # Check if layer has target firing rate and an ITP learning rate
     if layer.have_rate and layer.eta_ip > 0.0:

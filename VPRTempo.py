@@ -37,11 +37,13 @@ import blitnet as bn
 import utils as ut
 import numpy as np
 import torch.nn as nn
+import matplotlib.pyplot as plt
 
 from settings import configure, image_csv, model_logger
 from dataset import CustomImageDataset, ProcessImage
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from multiprocessing import Process, Queue
 
 class VPRTempo(nn.Module):
     def __init__(self):
@@ -51,17 +53,23 @@ class VPRTempo(nn.Module):
         configure(self)
         
         # Define the images to load (both training and inference)
-        image_csv(self)     
+        image_csv(self)
 
-        # Layer dict to keep track of layer names and their order
+        # Set the number of expert modules
+        self.experts = nn.ModuleList([self.create_modules() for _ in range(self.number_modules)])  
+
+    def create_modules(self):
+
+         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
         self.layer_counter = 0
+
+        module_layers = nn.ModuleDict()
 
         """
         Define trainable layers here
         """
-        self.add_layer(
-            'feature_layer',
+        feature_layer = bn.SNNLayer(
             dims=[self.input, self.feature],
             thr_range=[0, 0.5],
             fire_rate=[0.2, 0.9],
@@ -70,32 +78,25 @@ class VPRTempo(nn.Module):
             const_inp=[0, 0.1],
             p=[0.1, 0.5]
         )
-        self.add_layer(
-            'output_layer',
+        
+        output_layer = bn.SNNLayer(
             dims=[self.feature, self.output],
             ip_rate=0.15,
             stdp_rate=0.005,
             spk_force=True
         )
         
-    def add_layer(self, name, **kwargs):
-        """
-        Dynamically add a layer with given name and keyword arguments.
-        
-        :param name: Name of the layer to be added
-        :type name: str
-        :param kwargs: Hyperparameters for the layer
-        """
-        # Check for layer name duplicates
-        if name in self.layer_dict:
-            raise ValueError(f"Layer with name {name} already exists.")
-        
-        # Add a new SNNLayer with provided kwargs
-        setattr(self, name, bn.SNNLayer(**kwargs))
-        
+        module_layers['feature_layer'] = feature_layer
+        module_layers['output_layer'] = output_layer
+
         # Add layer name and index to the layer_dict
-        self.layer_dict[name] = self.layer_counter
-        self.layer_counter += 1                           
+        self.layer_dict['feature_layer'] = self.layer_counter
+        self.layer_counter += 1  
+        self.layer_dict['output_layer'] = self.layer_counter
+        self.layer_counter += 1  
+        
+        return module_layers
+                           
         
     def model_logger(self):
         """
@@ -114,55 +115,91 @@ class VPRTempo(nn.Module):
             
         return layer
 
-    def train_model(self, train_loader, layer, prev_layers=None):
+    def train_model(self, train_dataset, layer_name, prev_layers=None):
         """
-        Train a layer of the network model.
+        Train a module of the network model.
 
         :param train_loader: Training data loader
-        :param layer: Layer to train
+        :param layer_name: Name of the layer to train
         :param prev_layers: Previous layers to pass data through
         """
+        def get_dataloader_for_module(module_index, model):
+            # Define the start and end indices for this module
+            start_idx = module_index * model.module_images
+            end_idx = start_idx + model.module_images
+            
+            # Slice the dataset
+            subset = torch.utils.data.Subset(train_dataset, indices=range(start_idx, end_idx))
+            
+            # Create a DataLoader for the subset
+            train_loader = DataLoader(subset, 
+                                            batch_size=1, 
+                                            shuffle=False,
+                                            num_workers=8,
+                                            persistent_workers=True)
+            
+            return train_loader
 
         # Initialize the tqdm progress bar
-        pbar = tqdm(total=int(self.T),
-                    desc="Training ",
+        pbar_module = tqdm(total=int(len(self.experts)),
+                    desc="Training module progress",
                     position=0)
         
-        # Initialize the learning rates for each layer (used for annealment)
-        init_itp = layer.eta_ip.detach()
-        init_stdp = layer.eta_stdp.detach()
-        mod = 0  # Used to determine the learning rate annealment
-        # Run training for the specified number of epochs
-        for epoch in range(self.epoch):
-            #mod = 0  # Used to determine the learning rate annealment, resets at each epoch
-            # Run training for the specified number of timesteps
-            for spikes, labels in train_loader:
-                spikes, labels = spikes.to(self.device), labels.to(self.device)
-                idx = labels / self.filter # Set output index for spike forcing
-                # Pass through previous layers if they exist
-                if prev_layers:
-                    with torch.no_grad():
-                        for prev_layer_name in prev_layers:
-                            prev_layer = getattr(self, prev_layer_name) # Get the previous layer object
-                            spikes = self.forward(spikes, prev_layer) # Pass spikes through the previous layer
-                            spikes = bn.clamp_spikes(spikes, prev_layer) # Clamp spikes [0, 0.9]
-                else:
-                    prev_layer = None
-                # Get the output spikes from the current layer
-                pre_spike = spikes.detach() # Previous layer spikes for STDP
-                spikes = self.forward(spikes, layer) # Current layer spikes
-                spikes_noclp = spikes.detach() # Used for inhibitory homeostasis
-                spikes = bn.clamp_spikes(spikes, layer) # Clamp spikes [0, 0.9]
-                # Calculate STDP
-                layer = bn.calc_stdp(pre_spike,spikes,spikes_noclp,layer, idx, prev_layer=prev_layer)
-                # Adjust learning rates
-                layer = self._anneal_learning_rate(layer, mod, init_itp, init_stdp)
-                # Update the annealing mod & progress bar 
-                mod += 1
-                pbar.update(1)
+        for module_index, module in enumerate(self.experts):
+            layer = module[layer_name]
+            init_itp = layer.eta_ip.detach()
+            init_stdp = layer.eta_stdp.detach()
+            mod = 0  # Used to determine the learning rate annealment
+             # Initialize the tqdm progress bar
+            pbar_layer = tqdm(total=int(self.T),
+                            desc="Training layer progress",
+                            position=1)
+            # Get the DataLoader for the current module
+            train_loader = get_dataloader_for_module(module_index, model)
+            # Run training for the specified number of epochs
+            for epoch in range(self.epoch):
+                idx = 0
+                for spikes, labels in train_loader:
+                    spikes, labels = spikes.to(self.device), labels.to(self.device)
 
-        # Close the tqdm progress bar
-        pbar.close()
+                    # Pass through previous layers if they exist
+                    if prev_layers:
+                        with torch.no_grad():
+                            for prev_layer_name in prev_layers:
+                                prev_layer = getattr(module, prev_layer_name) # Get the previous layer object
+                                spikes = self.forward(spikes, prev_layer) # Pass spikes through the previous layer
+                                spikes = bn.clamp_spikes(spikes, prev_layer) # Clamp spikes [0, 0.9]
+                    else:
+                        prev_layer = None
+
+                        
+                    # Get the output spikes from the current layer
+                    pre_spike = spikes.detach() # Previous layer spikes for STDP
+                    spikes = self.forward(spikes, layer) # Current layer spikes
+                    spikes_noclp = spikes.detach() # Used for inhibitory homeostasis
+                    spikes = bn.clamp_spikes(spikes, layer) # Clamp spikes [0, 0.9]
+                    
+                    # Calculate STDP
+                    layer = bn.calc_stdp(pre_spike, spikes, spikes_noclp, layer, idx, prev_layer=prev_layer)  # No prev_layer here as you're training layer by layer
+
+                    # Adjust learning rates
+                    layer = self._anneal_learning_rate(layer, mod, init_itp, init_stdp)
+
+                    # Update the annealing mod & progress bar 
+                    mod += 1
+                    idx += 1
+
+                    if (idx) == model.output:
+                        idx = 0
+                    pbar_layer.update(1)
+
+            del train_loader
+            gc.collect()
+            # Close the tqdm progress bar
+            pbar_layer.close()
+            pbar_module.update(1)
+            
+        pbar_module.close()
 
         # Free up memory
         if self.device.type == "cuda":
@@ -181,7 +218,7 @@ class VPRTempo(nn.Module):
         numcorr = 0
         numcorridx = []
         idx = 0
-            
+
         # Initialize the tqdm progress bar
         pbar = tqdm(total=self.number_testing_images,
                     desc="Running the test network",
@@ -191,15 +228,25 @@ class VPRTempo(nn.Module):
         for spikes, labels in test_loader:
             # Set device
             spikes, labels = spikes.to(self.device), labels.to(self.device)
-            # Pass through previous layers if they exist
-            if layers:
-                for layer_name in layers:
-                    layer = getattr(self, layer_name)
-                    spikes = self.forward(spikes, layer)
-                    spikes = bn.clamp_spikes(spikes, layer)
+            init_spikes = spikes.detach()
+            outputs = []
+
+            # Pass the spikes through each module in the experts
+            for module in self.experts:
+                if layers:
+                    for layer_name in layers:
+                        layer = getattr(module, layer_name)
+                        spikes = self.forward(spikes, layer)
+                        spikes = bn.clamp_spikes(spikes, layer)
+                outputs.append(spikes.view(-1))  # Flatten and append to outputs
+                spikes = init_spikes.detach()
+            
+            # Now, gather the outputs to determine the argmax
+            continuous_tensor = torch.cat(outputs)
+            predictions = torch.argmax(continuous_tensor)
 
             # Evaluate if the prediction is correct
-            if torch.argmax(spikes.reshape(1, self.number_training_images)) == idx:
+            if predictions == idx:
                 numcorr += 1
                 numcorridx.append(idx)
 
@@ -211,8 +258,10 @@ class VPRTempo(nn.Module):
         pbar.close()
         # Calculate and record the accuracy
         accuracy = round((numcorr/self.number_testing_images)*100,2)
+        print(accuracy)
 
         return numcorr, numcorridx
+
 
     def forward(self, spikes, layer):
         """
@@ -278,16 +327,11 @@ def train_new_model(model, model_name):
                                        transform=image_transform,
                                        skip=model.filter,
                                        max_samples=model.number_training_images,
+                                       max_samples_per_module=int(model.module_images/model.location_repeat),
                                        test=False)
-    # Initialize the data loader
-    train_loader = DataLoader(train_dataset, 
-                              batch_size=1, 
-                              shuffle=False,
-                              num_workers=8,
-                              persistent_workers=True)
     # Set the model to training mode and move to device
     model.train()
-    model.to('cpu')
+    model.to(model.device)
 
     # Keep track of trained layers to pass data through them
     trained_layers = [] 
@@ -296,9 +340,9 @@ def train_new_model(model, model_name):
     for layer_name, _ in sorted(model.layer_dict.items(), key=lambda item: item[1]):
         print(f"Training layer: {layer_name}")
         # Retrieve the layer object
-        layer = getattr(model, layer_name)
+        #layer = getattr(model, layer_name)
         # Train the layer
-        model.train_model(train_loader, layer, prev_layers=trained_layers)
+        model.train_model(train_dataset, layer_name, prev_layers=trained_layers)
         # After training the current layer, add it to the list of trained layers
         trained_layers.append(layer_name)
     # Convert the model to eval
@@ -325,7 +369,8 @@ def run_inference(model_name):
                                       img_dirs=model.testing_dirs,
                                       transform=image_transform,
                                       skip=model.filter,
-                                      max_samples=model.number_testing_images)
+                                      max_samples=model.number_testing_images,
+                                      max_samples_per_module=int(model.module_images/model.location_repeat))
     # Initialize the data loader
     test_loader = DataLoader(test_dataset, 
                              batch_size=1, 
@@ -340,9 +385,56 @@ def run_inference(model_name):
     layer_names = list(model.layer_dict.keys())
 
     # Use evaluate method for inference accuracy
-    model.evaluate(test_loader, layers=layer_names)
+    numcorr, numcorridx = model.evaluate(test_loader, layers=layer_names)
 
-    return model
+    return numcorr, numcorridx
+
+def plot_dist(idxcorr, num_imgs):
+    # Flatten the idxcorr list of lists into a single list
+    all_results = idxcorr
+
+    # Calculate the distribution
+    distribution = [all_results.count(i) for i in range(num_imgs)]
+    num_trials = 1
+    average_distribution = [val/num_trials for val in distribution]
+
+    # Improved plot aesthetics
+    plt.figure(figsize=(14, 7))
+
+    # Use a color gradient
+    cmap = plt.get_cmap("viridis")
+    norm = plt.Normalize(vmin=min(average_distribution), vmax=max(average_distribution))
+
+    x = range(num_imgs)
+
+    # Using the overall average gradient value for the fill color
+    fill_color = cmap(norm(np.mean(average_distribution)))
+    plt.fill_between(x, average_distribution, color=fill_color, alpha=0.6)
+
+    # Plot each segment of the curve with its color
+    for i in range(len(x) - 1):
+        segment_color = cmap(norm(average_distribution[i]))
+        plt.plot([x[i], x[i+1]], [average_distribution[i], average_distribution[i+1]], color=segment_color, lw=2)
+
+    # Adding a colorbar
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = plt.colorbar(sm, orientation='vertical', fraction=0.03, pad=0.05)
+    cbar.set_label('Average Occurrence', rotation=270, labelpad=20)
+
+    plt.title("Average Distribution of 'Correct' Values")
+    plt.xlabel('Value')
+    plt.ylabel('Average Occurrence')
+
+    # Add margins for the axes
+    x_margin = 0.05 * num_imgs
+    y_margin = 0.05 * max(average_distribution)
+    plt.xlim(0 - x_margin, num_imgs + x_margin)
+    plt.ylim(0, max(average_distribution) + y_margin)
+
+    plt.tight_layout()
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.show()
 
 if __name__ == "__main__":
     # Set the number of threads for PyTorch
@@ -357,7 +449,8 @@ if __name__ == "__main__":
     if not use_pretrained:
         train_new_model(model, model_name) # Training
     with torch.no_grad():    
-        model = run_inference(model_name) # Inference
+        numcorr, idxcorr = run_inference(model_name) # Inference
+        plot_dist(idxcorr, model.number_testing_images)
     # Calculate full metrics if validation in settings is set to True
     if model.validation:
         validate = ut.validate(model)

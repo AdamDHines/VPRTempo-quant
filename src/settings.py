@@ -14,12 +14,12 @@ def configure(model):
     model.trainingPath = './dataset/' # Path to training images
     model.testPath = './dataset/' # Path to testing images
     model.number_modules = 1 # Number of expert modules (currently not implemented)
-    model.number_training_images = 500 # Number of training images
-    model.number_testing_images = 500 # Number of testing images
+    model.number_training_images = 2700 # Number of training images
+    model.number_testing_images = 2700 # Number of testing images
     model.locations = ["spring","fall"] # Locations to train on (location repeats for training datasets)
     model.test_locations = ["summer"] # Location to query with
     model.filter = 8 # Filter for training images
-    model.validation = True # Validation (maybe deprecated for now?)
+    model.validation = False # Validation (maybe deprecated for now?)
     model.log = True # Log to console
     
     # Set default paths if the provided paths are not valid directories
@@ -56,6 +56,7 @@ def configure(model):
     model.dims = [28,28] # Dimensions of the input image
     model.location_repeat = len(model.locations) # Number of times to repeat the locations
     model.annl_pow = 2 # Power of the annealmeant function
+    model.module_images = int((model.number_training_images*model.location_repeat)/ model.number_modules) # Number of images per module
 
     """
     These parameters are used to define the network architecture
@@ -65,8 +66,8 @@ def configure(model):
     model.output = int(model.number_training_images/model.number_modules) # Number of output neurons
     
     # Set the torch device
-    #model.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model.device = torch.device("cpu")
+    model.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    #model.device = torch.device("cpu")
     if model.device.type == "cuda":
         torch.cuda.init()
         torch.cuda.synchronize(device=model.device)
