@@ -1,5 +1,6 @@
 import torch
 import pprint
+import csv
 import wandb
 import tqdm
 import gc
@@ -12,12 +13,14 @@ import torch.nn as nn
 import torch.quantization as quantization
 import matplotlib.pyplot as plt
 import numpy as np
+import blitnet as bn
 
 from VPRTempo import VPRTempo
 from VPRTempoQuant import VPRTempoQuant
 from settings import configure, image_csv
 from dataset import ProcessImage, CustomImageDataset
 from torch.utils.data import DataLoader
+from torch.ao.quantization import QuantStub, DeQuantStub
 
 class VPRTempoWand(nn.Module):
     def __init__(self, fl, fh, n_init, n_itp, p_exc, p_inh, theta_max,
@@ -87,9 +90,10 @@ class VPRTempoSweeper():
 
         # Configure the network parameters
         configure(self)
+        image_csv(self)
         self.quantize = False # Run True to run VPRTempoQuant instead of base VPRTempo
         self.wandb = False # Run True to log to wandb
-        self.num_runs = 1 # Number of runs to perform (for both wandb and normal)
+        self.num_runs = 3 # Number of runs to perform (for both wandb and normal)
 
         # Initialize the image transforms and datasets
         self.image_transform = ProcessImage(self.dims, self.patches)
@@ -98,18 +102,20 @@ class VPRTempoSweeper():
                                         transform=self.image_transform,
                                         skip=self.filter,
                                         max_samples=self.number_training_images,
+                                        max_samples_per_module=int(self.module_images/self.location_repeat),
                                         test=False)
         self.test_dataset = CustomImageDataset(annotations_file=self.dataset_file, 
                                       img_dirs=self.testing_dirs,
                                       transform=self.image_transform,
                                       skip=self.filter,
-                                      max_samples=self.number_testing_images)
+                                      max_samples=self.number_testing_images,
+                                      max_samples_per_module=int(self.module_images/self.location_repeat))
         # Initialize the data loaders
-        self.train_loader = DataLoader(self.train_dataset, 
-                                batch_size=1, 
-                                shuffle=False,
-                                num_workers=2,
-                                persistent_workers=True)
+        #self.train_loader = DataLoader(self.train_dataset, 
+         #                       batch_size=1, 
+          #                      shuffle=False,
+           #                     num_workers=2,
+            #                    persistent_workers=True)
         self.test_loader = DataLoader(self.test_dataset, 
                                 batch_size=1, 
                                 shuffle=False,
@@ -194,7 +200,10 @@ class VPRTempoSweeper():
         tracemalloc.start()
         pbar_sweep = tqdm.tqdm(total=self.num_runs,
                          desc="Iterating through VPRTempo runs",
-                         position=0)
+                         position=0,
+                         colour='BLUE',
+                         leave=True,
+                         ncols=100)
         
          # If quantizing, set the quantization parameters
         if self.quantize:
@@ -222,9 +231,9 @@ class VPRTempoSweeper():
             for layer_name, _ in sorted(model.layer_dict.items(), key=lambda item: item[1]):
                 print(f"Training layer: {layer_name}")
                 # Retrieve the layer object
-                layer = getattr(model, layer_name)
-                # Train the layer
-                model.train_model(self.train_loader, layer, prev_layers=trained_layers)
+                #layer = getattr(model, layer_name)
+            # Train the layer
+                model.train_model(self.train_dataset, layer_name, prev_layers=trained_layers,model=model,pbar=pbar_sweep)
                 # After training the current layer, add it to the list of trained layers
                 trained_layers.append(layer_name)
 
@@ -243,12 +252,6 @@ class VPRTempoSweeper():
             numcorr, idxcorr = model.evaluate(self.test_loader, layers=layer_names)
             numcorr_all.append(numcorr)
             idxcorr_all.append(list(idxcorr))
-
-            snapshot = tracemalloc.take_snapshot()
-            top_stats = snapshot.statistics('lineno')
-
-            for stat in top_stats[:10]:
-                print(stat)
 
             print('')
             pbar_sweep.update(1)
@@ -306,6 +309,68 @@ class VPRTempoSweeper():
         plt.grid(True, which='both', linestyle='--', linewidth=0.5)
         plt.show()  
 
+    def gather_stats(self, numcorr, idxcorr):
+
+        # Start with basic statistics
+        av_numcorr = np.mean(numcorr)
+        std_numcorr = np.std(numcorr)
+
+        # Modular statistics
+        mod_numcorr = []
+        no_matchidx = [[] for _ in range(self.number_modules)]  # Initialize based on number of modules
+
+        for trial_index, trial in enumerate(idxcorr):
+            for n in range(self.number_modules):
+                start = int(n * (self.number_testing_images / self.number_modules))
+                end = int((n+1) * (self.number_testing_images / self.number_modules))
+                out = trial[start:end]
+                sum_out = np.sum(np.array(out) >= 0)
+                mod_numcorr.append(sum_out)
+                nomatch_out = np.where(np.array(out) < 0)
+                nomatch_out = nomatch_out[0] + start   # Correcting the addition to the indices
+                # Append to the specific index based on module index 'n'
+                no_matchidx[n].append(nomatch_out)
+
+        all_numcorr = np.reshape(mod_numcorr,(self.number_modules,self.num_runs))
+        p100r_numcorr = (all_numcorr/(self.number_testing_images/self.number_modules))*100
+        print(p100r_numcorr)
+
+        matching_numbers = []
+        for module_arrays in no_matchidx:
+            common_numbers = set(module_arrays[0])
+            for arr in module_arrays[1:]:
+                common_numbers.intersection_update(arr)
+                if not common_numbers:  # if the set is empty, break early
+                    break
+            if common_numbers:  # if there are still numbers left
+                matching_numbers.append(list(common_numbers))
+
+        print("Images that were not learned across all trials")
+        for i, numbers in enumerate(matching_numbers):
+            print(f"Module {i + 1} - {numbers}")
+
+        # Get the image names for the images that were not learned
+        matching_image_names = []
+
+        for module_indices in matching_numbers:
+            for index in module_indices:
+                matching_image_names.append(self.filteredNames[index])
+
+        print(matching_image_names)
+        # Specify the name of the file you want to save
+        filename = '/home/adam/Results/matching_image_names_2700places.csv'
+
+        # Open a file for writing
+        with open(filename, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+
+            # Write a header (optional)
+            writer.writerow(["Image Names"])
+
+            # Write image names
+            for name in matching_image_names:
+                writer.writerow([name])
+
 if __name__ == "__main__":
     # Initialize sweeper and VPRTempo model
     sweeper = VPRTempoSweeper()
@@ -316,5 +381,6 @@ if __name__ == "__main__":
     # Otherwise, run normal sweeps and collect output
     else:
         numcorr, idxcorr = sweeper.multi_run()
-        print(numcorr)
+
+    sweeper.gather_stats(numcorr, idxcorr)
     sweeper.plot_dist(idxcorr)

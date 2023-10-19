@@ -43,7 +43,6 @@ from settings import configure, image_csv, model_logger
 from dataset import CustomImageDataset, ProcessImage
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from multiprocessing import Process, Queue
 
 class VPRTempo(nn.Module):
     def __init__(self):
@@ -115,7 +114,7 @@ class VPRTempo(nn.Module):
             
         return layer
 
-    def train_model(self, train_dataset, layer_name, prev_layers=None):
+    def train_model(self, train_dataset, layer_name, prev_layers=None, model=None, pbar=None):
         """
         Train a module of the network model.
 
@@ -143,7 +142,9 @@ class VPRTempo(nn.Module):
         # Initialize the tqdm progress bar
         pbar_module = tqdm(total=int(len(self.experts)),
                     desc="Training module progress",
-                    position=0)
+                    position=1,
+                    colour='RED',
+                    ncols=100)
         
         for module_index, module in enumerate(self.experts):
             layer = module[layer_name]
@@ -153,7 +154,10 @@ class VPRTempo(nn.Module):
              # Initialize the tqdm progress bar
             pbar_layer = tqdm(total=int(self.T),
                             desc="Training layer progress",
-                            position=1)
+                            position=2,
+                            colour='GREEN',
+                            leave=True,
+                            ncols=100)
             # Get the DataLoader for the current module
             train_loader = get_dataloader_for_module(module_index, model)
             # Run training for the specified number of epochs
@@ -249,6 +253,8 @@ class VPRTempo(nn.Module):
             if predictions == idx:
                 numcorr += 1
                 numcorridx.append(idx)
+            else:
+                numcorridx.append(-1)
 
             # Update the index and progress bar
             idx += 1
@@ -342,7 +348,7 @@ def train_new_model(model, model_name):
         # Retrieve the layer object
         #layer = getattr(model, layer_name)
         # Train the layer
-        model.train_model(train_dataset, layer_name, prev_layers=trained_layers)
+        model.train_model(train_dataset, layer_name, prev_layers=trained_layers, model=model)
         # After training the current layer, add it to the list of trained layers
         trained_layers.append(layer_name)
     # Convert the model to eval

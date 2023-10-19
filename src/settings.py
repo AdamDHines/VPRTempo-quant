@@ -13,12 +13,12 @@ def configure(model):
     model.dataset_file = './dataset/'+model.dataset+'.csv' # Dataset file (must be PyTorch Dataset  )
     model.trainingPath = './dataset/' # Path to training images
     model.testPath = './dataset/' # Path to testing images
-    model.number_modules = 1 # Number of expert modules (currently not implemented)
+    model.number_modules = 6 # Number of expert modules (currently not implemented)
     model.number_training_images = 2700 # Number of training images
     model.number_testing_images = 2700 # Number of testing images
     model.locations = ["spring","fall"] # Locations to train on (location repeats for training datasets)
     model.test_locations = ["summer"] # Location to query with
-    model.filter = 8 # Filter for training images
+    model.filter = 4 # Filter for training images
     model.validation = False # Validation (maybe deprecated for now?)
     model.log = True # Log to console
     
