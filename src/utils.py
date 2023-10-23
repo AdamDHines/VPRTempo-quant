@@ -39,18 +39,18 @@ import torch.nn as nn
 from settings import configure, image_csv
 from dataset import CustomImageDataset, ProcessImage
 from torch.utils.data import DataLoader
-from metrics import recallAtK, createPR
+from metrics import recallAtK, createPR, recallAt100precision
 from timeit import default_timer
 from os import path
 
 class validate(nn.Module):
-    def __init__(self, model, quant=False):
+    def __init__(self, out, quant=False):
         super(validate, self).__init__()
 
         configure(self)
         image_csv(self)
 
-        self.model = model
+        self.out = out
         self.quant = quant
 
     # plot similarity matrices
@@ -251,24 +251,25 @@ class validate(nn.Module):
         out = []
 
         # Run inference for the specified number of timesteps
-        for spikes, labels in test_loader:
+        for spikes, labels, idx in test_loader:
             # Set device
-            spikes, labels = spikes.to(self.device), labels.to(self.device)
-            # Pass through previous layers if they exist
-            if layers:
-                for layer_name in layers:
-                    layer = getattr(model, layer_name)
-                    if self.quant:
-                        spikes = self.calc_quant(spikes, layer, model)
-                    else:
+            spikes, labels, idx = spikes.to(self.device), labels.to(self.device), idx.to(self.device)
+            init_spikes = spikes.detach()
+            outputs = []
+
+            # Pass the spikes through each module in the experts
+            for module in model.experts:
+                if layers:
+                    for layer_name in layers:
+                        layer = getattr(module, layer_name)
                         spikes = self.calc(spikes, layer)
-                    spikes = bn.clamp_spikes(spikes, layer)
-            if self.quant:
-                int_spikes = model.quant(spikes)
-                int_spikes = int_spikes[0].int_repr()
-                out.append(int_spikes.reshape(1, self.number_training_images).detach().tolist())
-            else:
-                out.append(spikes.reshape(1, self.number_training_images).detach().tolist())
+                        spikes = bn.clamp_spikes(spikes, layer)
+                outputs.append(spikes.view(-1))  # Flatten and append to outputs
+                spikes = init_spikes.detach()
+            
+            # Now, gather the outputs to determine the argmax
+            out_ten = torch.cat(outputs)
+            out.extend(out_ten.cpu().tolist())
 
         # Reshape into the similarity matrix
         out = np.array(out).T
@@ -326,7 +327,8 @@ class validate(nn.Module):
                                         img_dirs=model.testing_dirs,
                                         transform=image_transform,
                                         skip=model.filter,
-                                        max_samples=model.number_testing_images)
+                                        max_samples=model.number_testing_images,
+                                        max_samples_per_module=int(model.module_images/model.location_repeat))
         # Initialize the data loader
         test_loader = DataLoader(test_dataset, 
                                 batch_size=1, 
@@ -343,7 +345,7 @@ class validate(nn.Module):
         return out
 
     def forward(self):
-        out = self.run_inference()
+        #out = self.run_inference()
          # generate the ground truth matrix
         GT = np.zeros((self.number_testing_images, self.number_training_images), dtype=int)
         for n in range(len(GT)):
@@ -353,13 +355,14 @@ class validate(nn.Module):
         fig, axes = plt.subplots(2, 2, figsize=(10, 10))
         fig.suptitle('Network metrics', fontsize = 18)
         cmap = plt.cm.tab20c
-
+        self.out = self.out*255
+        self.out = self.out.astype(np.int8)
         # plot the similarity matrices
-        self.plot_similarity(out, 'VPRTempo similarity', cmap, ax=axes[0,0])
+        self.plot_similarity(self.out, 'VPRTempo similarity', cmap, ax=axes[0,0])
         self.plot_similarity(GT, 'Ground truth', cmap, ax=axes[0,1])
 
         # get the P & R 
-        P, R = createPR(out.astype(float), GT, GT, matching="single")
+        P, R = createPR(self.out.astype(float), GT, GT, matching="single")
         for n, ndx in enumerate(P):
             P[n] = round(ndx,2)
             R[n] = round(R[n],2)
@@ -369,7 +372,7 @@ class validate(nn.Module):
 
         # calculate the recall at N
         N_vals = [1, 5, 10, 15, 20, 25]
-        recallN = self.recallAtN(out.astype(float), GT, GT, N_vals)
+        recallN = self.recallAtN(self.out.astype(float), GT, GT, N_vals)
 
         # plot the recall at N
         self.plot_recallN(recallN, N_vals, 'Recall@N',ax=axes[1,1])
@@ -377,4 +380,7 @@ class validate(nn.Module):
         plt.tight_layout()
         plt.show()
 
-        fig.savefig(self.model.output_folder+'/metrics.pdf', format='pdf', dpi=300)
+        R = recallAt100precision(self.out.astype(float), GT, GT, matching='single')
+        print(R)
+
+        #fig.savefig(self.model.output_folder+'/metrics.pdf', format='pdf', dpi=300)

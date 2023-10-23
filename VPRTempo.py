@@ -132,11 +132,11 @@ class VPRTempo(nn.Module):
             
             # Create a DataLoader for the subset
             train_loader = DataLoader(subset, 
-                                            batch_size=1, 
-                                            shuffle=False,
-                                            num_workers=8,
-                                            persistent_workers=True)
-            
+                                    batch_size=1, 
+                                    shuffle=True,
+                                    num_workers=8,
+                                    persistent_workers=True)
+        
             return train_loader
 
         # Initialize the tqdm progress bar
@@ -160,12 +160,11 @@ class VPRTempo(nn.Module):
                             ncols=100)
             # Get the DataLoader for the current module
             train_loader = get_dataloader_for_module(module_index, model)
+
             # Run training for the specified number of epochs
             for epoch in range(self.epoch):
-                idx = 0
-                for spikes, labels in train_loader:
-                    spikes, labels = spikes.to(self.device), labels.to(self.device)
-
+                for spikes, labels, idx in train_loader:
+                    spikes, labels, idx = spikes.to(self.device), labels.to(self.device), idx.to(self.device)
                     # Pass through previous layers if they exist
                     if prev_layers:
                         with torch.no_grad():
@@ -182,19 +181,17 @@ class VPRTempo(nn.Module):
                     spikes = self.forward(spikes, layer) # Current layer spikes
                     spikes_noclp = spikes.detach() # Used for inhibitory homeostasis
                     spikes = bn.clamp_spikes(spikes, layer) # Clamp spikes [0, 0.9]
-                    
+
                     # Calculate STDP
-                    layer = bn.calc_stdp(pre_spike, spikes, spikes_noclp, layer, idx, prev_layer=prev_layer)  # No prev_layer here as you're training layer by layer
+                    layer = bn.calc_stdp(pre_spike, spikes, spikes_noclp, layer, model, module_index, idx,
+                                         prev_layer=prev_layer)  # No prev_layer here as you're training layer by layer
 
                     # Adjust learning rates
                     layer = self._anneal_learning_rate(layer, mod, init_itp, init_stdp)
 
                     # Update the annealing mod & progress bar 
                     mod += 1
-                    idx += 1
 
-                    if (idx) == model.output:
-                        idx = 0
                     pbar_layer.update(1)
 
             del train_loader
@@ -221,6 +218,7 @@ class VPRTempo(nn.Module):
         # Initialize the number of correct predictions
         numcorr = 0
         numcorridx = []
+        out_mat = []
         idx = 0
 
         # Initialize the tqdm progress bar
@@ -229,9 +227,9 @@ class VPRTempo(nn.Module):
                     position=0)
 
         # Run inference for the specified number of timesteps
-        for spikes, labels in test_loader:
+        for spikes, labels, idx in test_loader:
             # Set device
-            spikes, labels = spikes.to(self.device), labels.to(self.device)
+            spikes, labels, idx = spikes.to(self.device), labels.to(self.device), idx.to(self.device)
             init_spikes = spikes.detach()
             outputs = []
 
@@ -254,10 +252,13 @@ class VPRTempo(nn.Module):
                 numcorr += 1
                 numcorridx.append(idx)
             else:
-                numcorridx.append(-1)
+                numcorridx.append(torch.tensor([-1],device=self.device))
+
+            if model.validation:
+                out_mat.extend(continuous_tensor.cpu().tolist())
 
             # Update the index and progress bar
-            idx += 1
+            #idx += 1
             pbar.update(1)
 
         # Close the tqdm progress bar
@@ -266,7 +267,13 @@ class VPRTempo(nn.Module):
         accuracy = round((numcorr/self.number_testing_images)*100,2)
         print(accuracy)
 
-        return numcorr, numcorridx
+        if model.validation:
+            out = np.array(out_mat)
+            out = np.reshape(out,(model.number_training_images,model.number_testing_images))
+        else:
+            out = None
+
+        return numcorr, numcorridx, out
 
 
     def forward(self, spikes, layer):
@@ -391,9 +398,9 @@ def run_inference(model_name):
     layer_names = list(model.layer_dict.keys())
 
     # Use evaluate method for inference accuracy
-    numcorr, numcorridx = model.evaluate(test_loader, layers=layer_names)
+    numcorr, numcorridx, out = model.evaluate(test_loader, layers=layer_names)
 
-    return numcorr, numcorridx
+    return numcorr, numcorridx, out
 
 def plot_dist(idxcorr, num_imgs):
     # Flatten the idxcorr list of lists into a single list
@@ -422,15 +429,16 @@ def plot_dist(idxcorr, num_imgs):
         segment_color = cmap(norm(average_distribution[i]))
         plt.plot([x[i], x[i+1]], [average_distribution[i], average_distribution[i+1]], color=segment_color, lw=2)
 
-    # Adding a colorbar
+    # Create a mappable for the colorbar
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    cbar = plt.colorbar(sm, orientation='vertical', fraction=0.03, pad=0.05)
-    cbar.set_label('Average Occurrence', rotation=270, labelpad=20)
 
-    plt.title("Average Distribution of 'Correct' Values")
-    plt.xlabel('Value')
-    plt.ylabel('Average Occurrence')
+    # Capture the current axis
+    ax = plt.gca()
+
+    # Adding a colorbar using the captured axis
+    cbar = plt.colorbar(sm, ax=ax, orientation='vertical', fraction=0.03, pad=0.05)
+    cbar.set_label('Average Occurrence', rotation=270, labelpad=20)
 
     # Add margins for the axes
     x_margin = 0.05 * num_imgs
@@ -441,6 +449,7 @@ def plot_dist(idxcorr, num_imgs):
     plt.tight_layout()
     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
     plt.show()
+
 
 if __name__ == "__main__":
     # Set the number of threads for PyTorch
@@ -455,9 +464,9 @@ if __name__ == "__main__":
     if not use_pretrained:
         train_new_model(model, model_name) # Training
     with torch.no_grad():    
-        numcorr, idxcorr = run_inference(model_name) # Inference
-        plot_dist(idxcorr, model.number_testing_images)
+        numcorr, idxcorr, out = run_inference(model_name) # Inference
+        #plot_dist(idxcorr, model.number_testing_images)
     # Calculate full metrics if validation in settings is set to True
     if model.validation:
-        validate = ut.validate(model)
+        validate = ut.validate(out)
         validate()

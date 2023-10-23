@@ -14,6 +14,7 @@ import torch.quantization as quantization
 import matplotlib.pyplot as plt
 import numpy as np
 import blitnet as bn
+import utils as ut
 
 from VPRTempo import VPRTempo
 from VPRTempoQuant import VPRTempoQuant
@@ -93,7 +94,7 @@ class VPRTempoSweeper():
         image_csv(self)
         self.quantize = False # Run True to run VPRTempoQuant instead of base VPRTempo
         self.wandb = False # Run True to log to wandb
-        self.num_runs = 3 # Number of runs to perform (for both wandb and normal)
+        self.num_runs = 5 # Number of runs to perform (for both wandb and normal)
 
         # Initialize the image transforms and datasets
         self.image_transform = ProcessImage(self.dims, self.patches)
@@ -118,8 +119,8 @@ class VPRTempoSweeper():
             #                    persistent_workers=True)
         self.test_loader = DataLoader(self.test_dataset, 
                                 batch_size=1, 
-                                shuffle=False,
-                                num_workers=2,
+                                shuffle=True,
+                                num_workers=8,
                                 persistent_workers=True)
         
     def new_model(self):
@@ -323,11 +324,20 @@ class VPRTempoSweeper():
             for n in range(self.number_modules):
                 start = int(n * (self.number_testing_images / self.number_modules))
                 end = int((n+1) * (self.number_testing_images / self.number_modules))
-                out = trial[start:end]
-                sum_out = np.sum(np.array(out) >= 0)
+                out_list = trial[start:end]
+
+                # Convert list of tensors 'out_list' to a single tensor 'out_tensor'
+                # Filter out non-tensor elements and then concatenate
+                out_tensor = torch.cat([x for x in out_list if isinstance(x, torch.Tensor)])
+
+                # Use PyTorch functions for operations
+                sum_out = torch.sum(out_tensor >= 0).item()  # Convert to Python scalar with .item()
                 mod_numcorr.append(sum_out)
-                nomatch_out = np.where(np.array(out) < 0)
-                nomatch_out = nomatch_out[0] + start   # Correcting the addition to the indices
+
+                # Use PyTorch functions to find indices where out_tensor < 0
+                nomatch_out = torch.where(out_tensor < 0)[0]
+                nomatch_out = (nomatch_out + start).cpu().numpy()  # Convert tensor to NumPy array
+
                 # Append to the specific index based on module index 'n'
                 no_matchidx[n].append(nomatch_out)
 
@@ -356,7 +366,7 @@ class VPRTempoSweeper():
             for index in module_indices:
                 matching_image_names.append(self.filteredNames[index])
 
-        print(matching_image_names)
+        #print(matching_image_names)
         # Specify the name of the file you want to save
         filename = '/home/adam/Results/matching_image_names_2700places.csv'
 
@@ -374,13 +384,13 @@ class VPRTempoSweeper():
 if __name__ == "__main__":
     # Initialize sweeper and VPRTempo model
     sweeper = VPRTempoSweeper()
-    torch.set_num_threads(2)
+    torch.set_num_threads(8)
     # If running wandb, initialize and run wandb
     if sweeper.wandb:
         sweeper.wandb_run()
     # Otherwise, run normal sweeps and collect output
     else:
         numcorr, idxcorr = sweeper.multi_run()
-
-    sweeper.gather_stats(numcorr, idxcorr)
+    print(numcorr)
+    #sweeper.gather_stats(numcorr, idxcorr)
     sweeper.plot_dist(idxcorr)

@@ -158,9 +158,20 @@ def clamp_spikes(spikes, layer):
         
     return spikes
 
-def calc_stdp(prespike, spikes, noclp, layer, idx, prev_layer=None):
+def calc_stdp(prespike, spikes, noclp, layer, model, mod_ind, idx=None, prev_layer=None):
+
     # Spike Forcing has special rules to make calculated and forced spikes match
     if layer.spk_force:
+        layer_bounds = []
+        for n in range(model.location_repeat-1):
+            layer_bounds.append(((((n+1)*(model.module_images/model.location_repeat)))*(mod_ind+1))-1)
+        if any(idx > x for x in layer_bounds):
+            for n, ndx in enumerate(layer_bounds):
+                if idx > ndx:
+                    mod_fact = n+1
+            idx = (idx - (model.module_images/model.location_repeat)*mod_fact) - (model.module_images*mod_ind)
+        else:
+            idx = idx - (model.module_images*mod_ind)
         
         # Get layer dimensions
         shape = layer.exc.weight.data.shape
