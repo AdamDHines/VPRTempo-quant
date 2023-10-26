@@ -10,6 +10,7 @@ import torch.quantization as tq
 
 from torchvision.io import read_image
 from torch.utils.data import Dataset
+from settings import configure
 
 class GetPatches2D:
     def __init__(self, patch_size, image_pad):
@@ -159,14 +160,14 @@ class ProcessImage:
         return img
 
 class CustomImageDataset(Dataset):
-    def __init__(self, annotations_file, img_dirs, transform=None, target_transform=None, 
+    def __init__(self, annotations_file, img_dirs, dims=[0,0], transform=None, target_transform=None, 
                  skip=1, max_samples=None, max_samples_per_module=None, test=True):
         self.transform = transform
         self.target_transform = target_transform
         self.skip = skip
+        self.dims = dims
         
         all_datasets = []
-
         # Load all datasets and apply skip and max_samples immediately
         for img_dir in img_dirs:
             img_labels = pd.read_csv(annotations_file)
@@ -201,10 +202,27 @@ class CustomImageDataset(Dataset):
             
         image = read_image(img_path)
         label = self.img_labels.iloc[idx, 1]
+        image = image.unsqueeze(0)
+        image = image/255
         
         if self.transform:
-            image = self.transform(image)
+            with torch.no_grad():
+                image = self.transform(image)
         if self.target_transform:
             label = self.target_transform(label)
-            
+        image = image.squeeze(0)
+        #img = img*255
+        # Convert the image to grayscale using the standard weights for RGB channels
+        #if img.shape[0] == 3:
+         #   img = 0.299 * img[0] + 0.587 * img[1] + 0.114 * img[2]
+         # Add a channel dimension to the resulting grayscale image
+        #img= img.unsqueeze(0)
+
+        # gamma correction
+        #mid = 0.5
+        #mean = torch.mean(img)
+        #gamma = math.log(mid * 255) / math.log(mean)
+        #img = torch.pow(img, gamma).clip(0, 255)
+        #img = img/255
+        image = torch.reshape(image[0],(self.dims[0]*self.dims[1],)) 
         return image, label, idx

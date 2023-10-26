@@ -10,16 +10,16 @@ def configure(model):
     Configure the model
     """
     model.dataset = 'nordland' # Dataset name
-    model.dataset_file = './dataset/'+model.dataset+'.csv' # Dataset file (must be PyTorch Dataset  )
+    model.dataset_file = './dataset/'+model.dataset+'_2700.csv' # Dataset file (must be PyTorch Dataset  )
     model.trainingPath = './dataset/' # Path to training images
     model.testPath = './dataset/' # Path to testing images
-    model.number_modules = 3 # Number of expert modules (currently not implemented)
-    model.number_training_images = 90 # Number of training images
-    model.number_testing_images = 90 # Number of testing images
-    model.locations = ["summer","spring","fall"] # Locations to train on (location repeats for training datasets)
+    model.number_modules = 1 # Number of expert modules
+    model.number_training_images = 500 # Number of training images
+    model.number_testing_images = 500 # Number of testing images
+    model.locations = ["spring","fall","summer"] # Locations to train on (location repeats for training datasets)
     model.test_locations = ["winter"] # Location to query with
     model.filter = 8 # Filter for training images
-    model.validation = False # Validation (maybe deprecated for now?)
+    model.validation = True # Validation (maybe deprecated for now?)
     model.log = True # Log to console
     
     # Set default paths if the provided paths are not valid directories
@@ -51,9 +51,9 @@ def configure(model):
         model.testing_dirs.append(os.path.join(model.testPath,n))
 
     # Set the model parameters
-    model.epoch = 4 # Number of epochs
+    model.epoch = 25 # Number of epochs
     model.patches = 7 # Number of patches
-    model.dims = [28,28] # Dimensions of the input image
+    model.dims = [22,40] # Dimensions of the input image
     model.location_repeat = len(model.locations) # Number of times to repeat the locations
     model.annl_pow = 2 # Power of the annealmeant function
     model.module_images = int((model.number_training_images*model.location_repeat)/ model.number_modules) # Number of images per module
@@ -62,7 +62,7 @@ def configure(model):
     These parameters are used to define the network architecture
     """
     model.input = int(model.dims[0]*model.dims[1]) # Number of input neurons
-    model.feature = int(model.input*2) # Number of feature neurons
+    model.feature = int(model.input*4) # Number of feature neurons
     model.output = int(model.number_training_images/model.number_modules) # Number of output neurons
     
     # Set the torch device

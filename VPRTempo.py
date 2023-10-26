@@ -32,6 +32,7 @@ sys.path.append('./src')
 sys.path.append('./models')
 sys.path.append('./output')
 sys.path.append('./dataset')
+sys.path.append('./dataset/model')
 
 import blitnet as bn
 import utils as ut
@@ -41,6 +42,7 @@ import matplotlib.pyplot as plt
 
 from settings import configure, image_csv, model_logger
 from dataset import CustomImageDataset, ProcessImage
+from train_conv2d import DownscaleTo28x28Net
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -73,15 +75,13 @@ class VPRTempo(nn.Module):
             thr_range=[0, 0.5],
             fire_rate=[0.2, 0.9],
             ip_rate=0.15,
-            stdp_rate=0.005,
-            const_inp=[0, 0.1],
+            stdp_rate=0.001,
             p=[0.1, 0.5]
         )
         
         output_layer = bn.SNNLayer(
             dims=[self.feature, self.output],
-            ip_rate=0.15,
-            stdp_rate=0.005,
+            stdp_rate=0.001,
             spk_force=True
         )
         
@@ -137,7 +137,7 @@ class VPRTempo(nn.Module):
                                     num_workers=8,
                                     persistent_workers=True)
         
-            return train_loader
+            return train_loader, start_idx, end_idx
 
         # Initialize the tqdm progress bar
         pbar_module = tqdm(total=int(len(self.experts)),
@@ -159,7 +159,10 @@ class VPRTempo(nn.Module):
                             leave=True,
                             ncols=100)
             # Get the DataLoader for the current module
-            train_loader = get_dataloader_for_module(module_index, model)
+            train_loader, start, end = get_dataloader_for_module(module_index, model)
+            layer_bounds = []
+            for n in reversed(range(1,model.location_repeat)):
+                layer_bounds.append(int(end - (n*(model.module_images/model.location_repeat))-1))
 
             # Run training for the specified number of epochs
             for epoch in range(self.epoch):
@@ -183,7 +186,7 @@ class VPRTempo(nn.Module):
                     spikes = bn.clamp_spikes(spikes, layer) # Clamp spikes [0, 0.9]
 
                     # Calculate STDP
-                    layer = bn.calc_stdp(pre_spike, spikes, spikes_noclp, layer, model, module_index, idx,
+                    layer = bn.calc_stdp(pre_spike, spikes, spikes_noclp, layer, model, module_index, layer_bounds, idx,
                                          prev_layer=prev_layer)  # No prev_layer here as you're training layer by layer
 
                     # Adjust learning rates
@@ -194,8 +197,6 @@ class VPRTempo(nn.Module):
 
                     pbar_layer.update(1)
 
-            del train_loader
-            gc.collect()
             # Close the tqdm progress bar
             pbar_layer.close()
             pbar_module.update(1)
@@ -255,6 +256,8 @@ class VPRTempo(nn.Module):
                 numcorridx.append(torch.tensor([-1],device=self.device))
 
             if model.validation:
+                continuous_tensor = continuous_tensor*255
+                continuous_tensor = continuous_tensor.to(torch.int8)
                 out_mat.extend(continuous_tensor.cpu().tolist())
 
             # Update the index and progress bar
@@ -270,6 +273,7 @@ class VPRTempo(nn.Module):
         if model.validation:
             out = np.array(out_mat)
             out = np.reshape(out,(model.number_training_images,model.number_testing_images))
+            #np.save('/home/adam/Results/out_mat_27500.npy',out)
         else:
             out = None
 
@@ -334,10 +338,13 @@ def train_new_model(model, model_name):
     :param qconfig: Quantization configuration
     """
     # Initialize the image transforms and datasets
-    image_transform = ProcessImage(model.dims, model.patches)
+    #image_transform = ProcessImage(model.dims, model.patches)
+    image_transform = DownscaleTo28x28Net()
+    image_transform.load_state_dict(torch.load('/home/adam/Results/conv_transform_epoch_5.pth'))
     train_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
                                        img_dirs=model.training_dirs,
                                        transform=image_transform,
+                                       dims=model.dims,
                                        skip=model.filter,
                                        max_samples=model.number_training_images,
                                        max_samples_per_module=int(model.module_images/model.location_repeat),
@@ -377,10 +384,13 @@ def run_inference(model_name):
     model.eval()
 
     # Initialize the image transforms and datasets
-    image_transform = ProcessImage(model.dims, model.patches)
+    #image_transform = ProcessImage(model.dims, model.patches)
+    image_transform = DownscaleTo28x28Net()
+    image_transform.load_state_dict(torch.load('/home/adam/Results/conv_transform_epoch_5.pth'))
     test_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
                                       img_dirs=model.testing_dirs,
                                       transform=image_transform,
+                                      dims=model.dims,
                                       skip=model.filter,
                                       max_samples=model.number_testing_images,
                                       max_samples_per_module=int(model.module_images/model.location_repeat))
@@ -468,5 +478,6 @@ if __name__ == "__main__":
         #plot_dist(idxcorr, model.number_testing_images)
     # Calculate full metrics if validation in settings is set to True
     if model.validation:
+        #out = np.load('/home/adam/Results/out_mat_27500.npy')
         validate = ut.validate(out)
         validate()

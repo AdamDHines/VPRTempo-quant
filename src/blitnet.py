@@ -92,6 +92,8 @@ class SNNLayer(nn.Module):
                                              W_range=[0,1], 
                                              p=p[0])
         
+        
+        
         # Create the inhibitory weights
         self.inh = nn.Linear(dims[0], dims[1], bias=False)
         self.inh.weight = self.addWeights(dims=dims,
@@ -158,13 +160,10 @@ def clamp_spikes(spikes, layer):
         
     return spikes
 
-def calc_stdp(prespike, spikes, noclp, layer, model, mod_ind, idx=None, prev_layer=None):
+def calc_stdp(prespike, spikes, noclp, layer, model, mod_ind, layer_bounds, idx=None, prev_layer=None):
 
     # Spike Forcing has special rules to make calculated and forced spikes match
     if layer.spk_force:
-        layer_bounds = []
-        for n in range(model.location_repeat-1):
-            layer_bounds.append(((((n+1)*(model.module_images/model.location_repeat)))*(mod_ind+1))-1)
         if any(idx > x for x in layer_bounds):
             for n, ndx in enumerate(layer_bounds):
                 if idx > ndx:

@@ -355,8 +355,6 @@ class validate(nn.Module):
         fig, axes = plt.subplots(2, 2, figsize=(10, 10))
         fig.suptitle('Network metrics', fontsize = 18)
         cmap = plt.cm.tab20c
-        self.out = self.out*255
-        self.out = self.out.astype(np.int8)
         # plot the similarity matrices
         self.plot_similarity(self.out, 'VPRTempo similarity', cmap, ax=axes[0,0])
         self.plot_similarity(GT, 'Ground truth', cmap, ax=axes[0,1])
@@ -369,11 +367,12 @@ class validate(nn.Module):
 
          # plot the PR curve
         self.plot_PR(P, R, 'Precision-recall curve',ax=axes[1,0])
-
+        print(P)
+        print(R)
         # calculate the recall at N
         N_vals = [1, 5, 10, 15, 20, 25]
         recallN = self.recallAtN(self.out.astype(float), GT, GT, N_vals)
-
+        print(recallN)
         # plot the recall at N
         self.plot_recallN(recallN, N_vals, 'Recall@N',ax=axes[1,1])
 

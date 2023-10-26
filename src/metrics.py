@@ -18,7 +18,7 @@
 import numpy as np
 
 
-def createPR(S_in, GThard, GTsoft=None, matching='multi', n_thresh=100):
+def createPR(S, GThard, GTsoft=None, matching='multi', n_thresh=100):
     """
     Calculates the precision and recall at n_thresh equally spaced threshold values
     for a given similarity matrix S_in and ground truth matrices GThard and GTsoft for
@@ -35,8 +35,8 @@ def createPR(S_in, GThard, GTsoft=None, matching='multi', n_thresh=100):
     The integer n_tresh controls the number of threshold values and should be >1.
     """
 
-    assert (S_in.shape == GThard.shape and S_in.shape == GTsoft.shape),"S_in, GThard and GTsoft must have the same shape"
-    assert (S_in.ndim == 2),"S_in, GThard and GTsoft must be two-dimensional"
+    #assert (S_in.shape == GThard.shape and S_in.shape == GTsoft.shape),"S_in, GThard and GTsoft must have the same shape"
+    #assert (S_in.ndim == 2),"S_in, GThard and GTsoft must be two-dimensional"
     assert (matching in ['single', 'multi']),"matching should contain one of the following strings: [single, multi]"
     assert (n_thresh > 1),"n_thresh must be >1"
 
@@ -46,7 +46,8 @@ def createPR(S_in, GThard, GTsoft=None, matching='multi', n_thresh=100):
         GTsoft = GTsoft.astype('bool')
 
     # copy S and set elements that are only true in GTsoft to min(S) to ignore them during evaluation
-    S = S_in.copy()
+    #S = S_in.copy()
+
     S[S == 0] = np.nan
     if GTsoft is not None:
         S[GTsoft & ~GT] = S.min()
@@ -126,7 +127,7 @@ def recallAt100precision(S_in, GThard, GTsoft=None, matching='multi', n_thresh=1
     return R
 
 
-def recallAtK(S_in, GThard, GTsoft=None, K=1):
+def recallAtK(S, GThard, GTsoft=None, K=1):
     """
     Calculates the recall@K for a given similarity matrix S_in and ground truth matrices 
     GThard and GTsoft.
@@ -141,10 +142,10 @@ def recallAtK(S_in, GThard, GTsoft=None, K=1):
     that must contain an actually matching image pair.
     """
 
-    assert (S_in.shape == GThard.shape),"S_in and GThard must have the same shape"
-    if GTsoft is not None:
-        assert (S_in.shape == GTsoft.shape),"S_in and GTsoft must have the same shape"
-    assert (S_in.ndim == 2),"S_in, GThard and GTsoft must be two-dimensional"
+    #assert (S_in.shape == GThard.shape),"S_in and GThard must have the same shape"
+    #if GTsoft is not None:
+     #   assert (S_in.shape == GTsoft.shape),"S_in and GTsoft must have the same shape"
+    #assert (S_in.ndim == 2),"S_in, GThard and GTsoft must be two-dimensional"
     assert (K >= 1),"K must be >=1"
 
     # ensure logical datatype in GT and GTsoft
@@ -152,7 +153,7 @@ def recallAtK(S_in, GThard, GTsoft=None, K=1):
     GTsoft = GTsoft.astype('bool')
 
     # copy S and set elements that are only true in GTsoft to min(S) to ignore them during evaluation
-    S = S_in.copy()
+    #S = S_in.copy()
     S[GTsoft & ~GT] = S.min()
 
     # discard all query images without an actually matching database image

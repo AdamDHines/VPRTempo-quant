@@ -6,7 +6,7 @@ import re
 import shutil
 import zipfile
 import sys
-sys.path.append('..//dataset')
+sys.path.append('.//dataset')
 
 from os import walk
 
@@ -19,33 +19,44 @@ def nord_sort():
         return [ atoi(c) for c in re.split(r'(\d+)', text) ]
     
     # set the base path to the location of the downloaded Nordland datasets
-    basePath = '../dataset/'
+    basePath = './dataset/'
     assert(os.path.isdir(basePath)),"Please set the basePath to the location of the downloaded Nordland datasets"
     
-    # define the subfolders of the Nordland datasets
-    subPath = ["spring_images_train/section1/","spring_images_train/section2/",
-               "fall_images_train/section1/","fall_images_train/section2/",
-               "winter_images_train/section1/","winter_images_train/section2/",
-               "summer_images_train/section1/","summer_images_train/section2/"]
+    # define the subfolders of the Nordland datasets (for training)
+   # subPath = ["spring_images_train/section1/","spring_images_train/section2/",
+    #           "fall_images_train/section1/","fall_images_train/section2/",
+     #          "winter_images_train/section1/","winter_images_train/section2/",
+      #         "summer_images_train/section1/","summer_images_train/section2/"]
+    
+    # define the subfolders of the Nordland datasets (for testing)
+    subPath = ["spring_images_test/section1/", "spring_images_test/section2/", "spring_images_test/section3/", 
+               "fall_images_test/section1/", "fall_images_test/section2/", "fall_images_test/section3/", 
+               "winter_images_test/section1/", "winter_images_test/section2/", "winter_images_test/section3/", 
+               "summer_images_test/section1/", "summer_images_test/section2/", "summer_images_test/section3/"]
+
     
     # set the desired output folder for unzipping and organization
-    outDir = '../dataset/'
+    outDir = './dataset/'
     assert(os.path.isdir(outDir)),"Please set the outDir to the desired output location for unzipping the Nordland datasets"
     
     # define output paths for the data
-    outPath = [os.path.join(outDir,"spring/"),os.path.join(outDir,"fall/"),
-               os.path.join(outDir,"winter/"),os.path.join(outDir,"summer/")]
+    outPath = [os.path.join(outDir,"spring_test/"),os.path.join(outDir,"fall_test/"),
+               os.path.join(outDir,"winter_test/"),os.path.join(outDir,"summer_test/")]
     
     # check for existence of the zip folders, throw exception if missing
-    zipNames = ["spring_images_train.zip","fall_images_train.zip",
-                "winter_images_train.zip","summer_images_train.zip"]
+    #zipNames = ["spring_images_train.zip","fall_images_train.zip",
+        #        "winter_images_train.zip","summer_images_train.zip"]
+    
+    zipNames = ["spring_images_test.zip", "fall_images_test.zip", 
+                "winter_images_test.zip", "summer_images_test.zip"]
+
     for n in zipNames:
         if not os.path.exists(basePath+n):
             raise Exception('Please ensure dataset .zip folders have been downloaded') 
     
     # check if nordland data folders have already been unzipped
     zip_flag = []
-    for n, ndx in enumerate(range(0,len(subPath),2)):
+    for n, ndx in enumerate(range(0,len(subPath),3)):
         print('Unzipping '+zipNames[n])
         if os.path.exists(basePath+subPath[ndx]):
             # check if the folder contains any files
@@ -113,3 +124,4 @@ def nord_sort():
             continue
     
     print('Finished unzipping and organizing Nordland dataset')
+nord_sort()
