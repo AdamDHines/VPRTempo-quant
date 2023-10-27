@@ -51,9 +51,9 @@ def configure(model):
         model.testing_dirs.append(os.path.join(model.testPath,n))
 
     # Set the model parameters
-    model.epoch = 25 # Number of epochs
+    model.epoch = 5 # Number of epochs
     model.patches = 7 # Number of patches
-    model.dims = [22,40] # Dimensions of the input image
+    model.dims = [45,80] # Dimensions of the input image
     model.location_repeat = len(model.locations) # Number of times to repeat the locations
     model.annl_pow = 2 # Power of the annealmeant function
     model.module_images = int((model.number_training_images*model.location_repeat)/ model.number_modules) # Number of images per module
@@ -62,7 +62,7 @@ def configure(model):
     These parameters are used to define the network architecture
     """
     model.input = int(model.dims[0]*model.dims[1]) # Number of input neurons
-    model.feature = int(model.input*4) # Number of feature neurons
+    model.feature = int(model.input*2) # Number of feature neurons
     model.output = int(model.number_training_images/model.number_modules) # Number of output neurons
     
     # Set the torch device

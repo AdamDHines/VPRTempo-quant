@@ -210,13 +210,12 @@ class CustomImageDataset(Dataset):
                 image = self.transform(image)
         if self.target_transform:
             label = self.target_transform(label)
-        image = image.squeeze(0)
-        #img = img*255
+        img = image.squeeze(0)
         # Convert the image to grayscale using the standard weights for RGB channels
-        #if img.shape[0] == 3:
-         #   img = 0.299 * img[0] + 0.587 * img[1] + 0.114 * img[2]
+        if img.shape[0] == 3:
+            img = 0.299 * img[0] + 0.587 * img[1] + 0.114 * img[2]
          # Add a channel dimension to the resulting grayscale image
-        #img= img.unsqueeze(0)
+        img= img.unsqueeze(0)
 
         # gamma correction
         #mid = 0.5
@@ -224,5 +223,5 @@ class CustomImageDataset(Dataset):
         #gamma = math.log(mid * 255) / math.log(mean)
         #img = torch.pow(img, gamma).clip(0, 255)
         #img = img/255
-        image = torch.reshape(image[0],(self.dims[0]*self.dims[1],)) 
-        return image, label, idx
+        img = torch.reshape(img[0],(self.dims[0]*self.dims[1],)) 
+        return img, label, idx

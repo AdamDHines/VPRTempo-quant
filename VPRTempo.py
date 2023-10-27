@@ -340,7 +340,8 @@ def train_new_model(model, model_name):
     # Initialize the image transforms and datasets
     #image_transform = ProcessImage(model.dims, model.patches)
     image_transform = DownscaleTo28x28Net()
-    image_transform.load_state_dict(torch.load('/home/adam/Results/conv_transform_epoch_5.pth'))
+    image_transform.load_state_dict(torch.load('/home/adam/Results/conv_transform_epoch_4.pth'))
+    image_transform.eval()
     train_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
                                        img_dirs=model.training_dirs,
                                        transform=image_transform,
@@ -386,7 +387,8 @@ def run_inference(model_name):
     # Initialize the image transforms and datasets
     #image_transform = ProcessImage(model.dims, model.patches)
     image_transform = DownscaleTo28x28Net()
-    image_transform.load_state_dict(torch.load('/home/adam/Results/conv_transform_epoch_5.pth'))
+    image_transform.load_state_dict(torch.load('/home/adam/Results/conv_transform_epoch_4.pth'))
+    image_transform.eval()
     test_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
                                       img_dirs=model.testing_dirs,
                                       transform=image_transform,
