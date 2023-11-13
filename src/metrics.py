@@ -35,21 +35,16 @@ def createPR(S_in, GThard, GTsoft=None, matching='multi', n_thresh=100):
     The integer n_tresh controls the number of threshold values and should be >1.
     """
 
-    assert (S_in.shape == GThard.shape and S_in.shape == GTsoft.shape),"S_in, GThard and GTsoft must have the same shape"
     assert (S_in.ndim == 2),"S_in, GThard and GTsoft must be two-dimensional"
     assert (matching in ['single', 'multi']),"matching should contain one of the following strings: [single, multi]"
     assert (n_thresh > 1),"n_thresh must be >1"
 
     # ensure logical datatype in GT and GTsoft
     GT = GThard.astype('bool')
-    if GTsoft is not None:
-        GTsoft = GTsoft.astype('bool')
 
     # copy S and set elements that are only true in GTsoft to min(S) to ignore them during evaluation
     S = S_in.copy()
     S[S == 0] = np.nan
-    if GTsoft is not None:
-        S[GTsoft & ~GT] = S.min()
 
     # single-best-match or multi-match VPR
     if matching == 'single':

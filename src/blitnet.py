@@ -148,6 +148,7 @@ class SNNLayer(nn.Module):
         # Normalise the weights
         nrm = torch.linalg.norm(W[len(W)-1],ord=1,axis=0)
         nrm[nrm==0.0] = 1.0
+
         W = nn.Parameter(W/nrm)
     
         return W

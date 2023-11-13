@@ -42,7 +42,7 @@ from dataset import CustomImageDataset, ProcessImage
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from prettytable import PrettyTable
-from metrics import recallAtK
+from metrics import recallAtK, createPR
 
 class VPRTempo(nn.Module):
     def __init__(self):
@@ -142,6 +142,10 @@ class VPRTempo(nn.Module):
         table.add_row(["Recall", R[0], R[1], R[2], R[3], R[4], R[5]])
         model.logger.info(table)
 
+        P, R = createPR(out,GThard=GT,matching="single")
+        print(P)
+        print(R)
+
     def forward(self, spikes, layer):
         """
         Compute the forward pass of the model.
@@ -204,7 +208,7 @@ def run_inference(model, model_name):
     # Initialize the data loader
     test_loader = DataLoader(test_dataset, 
                              batch_size=1, 
-                             shuffle=True,
+                             shuffle=False,
                              num_workers=8,
                              persistent_workers=True)
     # Set the model to evaluation mode and set configuration
