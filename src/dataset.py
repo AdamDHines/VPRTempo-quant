@@ -10,6 +10,7 @@ import torch.quantization as tq
 
 from torchvision.io import read_image
 from torch.utils.data import Dataset
+from torchvision.utils import save_image
 
 class GetPatches2D:
     def __init__(self, patch_size, image_pad):
@@ -155,7 +156,7 @@ class ProcessImage:
         spike_maker = SetImageAsSpikes()
         img = spike_maker(img)
         img = torch.squeeze(img,0)
-
+        
         return img
 
 class CustomImageDataset(Dataset):

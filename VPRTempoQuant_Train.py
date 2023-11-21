@@ -245,53 +245,15 @@ class PowerOfTwoMinMaxObserver(MinMaxObserver):
                 zero_point = 128
         else:
             zero_point = self.quant_min - round(min_val / scale)
-
-        # Convert scale and zero_point to PyTorch tensors
-        scale = torch.tensor(scale, dtype=torch.float32)
-        zero_point = torch.tensor(zero_point, dtype=torch.int64)
-        return scale, zero_point
-
-    def extra_repr(self):
-        return f"min_val={self.min_val}, max_val={self.max_val}, scale=power of two"
-
-class PowerOfTwoWeightObserver(MinMaxObserver):
-    """
-    Observer module for computing the quantization parameters based on the
-    running min and max values, with scales as powers of two for weights.
-
-    This observer extends the MinMaxObserver to use scales that are powers of two.
-    It overrides the calculate_qparams method to compute the power of two scale.
-    """
-
-    def __init__(self, bit_width=8, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.dtype = torch.qint8  # Default dtype
-        self.bit_width = bit_width  # Specify the bit width
-
-    def calculate_qparams(self):
-        r"""Calculates the quantization parameters with scale as a power of two."""
-        min_val, max_val = self.min_val.item(), self.max_val.item()
-
-        # Calculate the scale as the nearest power of two
-        max_range = max(abs(min_val), abs(max_val))
-        scale = 2 ** math.ceil(math.log2(max_range / (self.quant_max - self.quant_min)))
-
-        # Calculate zero_point as in the base class
-        if self.qscheme == torch.per_tensor_symmetric:
-            zero_point = 0
-        else:
-            zero_point = self.quant_min - round(min_val / scale)
+            # Clamp zero_point to be within 0-255
+            zero_point = max(0, min(zero_point, 255))
 
         # Convert scale and zero_point to PyTorch tensors
         scale = torch.tensor(scale, dtype=torch.float32)
         zero_point = torch.tensor(zero_point, dtype=torch.int64)
 
-        # Adjust the scale based on the specified bit width
-        scale = scale / (2 ** (self.bit_width - 1))
         return scale, zero_point
 
-    def extra_repr(self):
-        return f"min_val={self.min_val}, max_val={self.max_val}, scale=power of two, bit_width={self.bit_width}"
 
 def train_new_model(model, model_name, qconfig):
     """
@@ -321,9 +283,6 @@ def train_new_model(model, model_name, qconfig):
     # Set the quantization configuration with the custom observer for activations
     qconfig = quantization.get_default_qat_qconfig('fbgemm')
     custom_activation_observer = PowerOfTwoMinMaxObserver.with_args()  # Create an instance of your custom observer
-    custom_weight_observer = PowerOfTwoWeightObserver.with_args(bit_width=8)
-    #custom_weight_observer.dtype = torch.qint8
-
     # Set the custom observer for activations in the qconfig
     qconfig = torch.quantization.default_qconfig._replace(activation=custom_activation_observer)
 

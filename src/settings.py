@@ -20,7 +20,7 @@ def configure(model):
     model.filter = 8 # Filter for training images
     model.validation = True # Validation (maybe deprecated for now?)
     model.log = True # Log to console
-    model.quantize = True # Quantize the network
+    model.quantize = False # Quantize the network
     
     # Set default paths if the provided paths are not valid directories
     if not os.path.isdir(getattr(model, 'trainingPath', '')):
@@ -52,8 +52,8 @@ def configure(model):
 
     # Set the model parameters
     model.epoch = 4 # Number of epochs
-    model.patches = 7 # Number of patches
-    model.dims = [28,28] # Dimensions of the input image
+    model.patches = 15 # Number of patches
+    model.dims = [56,56] # Dimensions of the input image
     model.location_repeat = len(model.locations) # Number of times to repeat the locations
     model.annl_pow = 2 # Power of the annealmeant function
 

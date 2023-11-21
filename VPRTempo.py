@@ -36,13 +36,14 @@ sys.path.append('./dataset')
 import blitnet as bn
 import numpy as np
 import torch.nn as nn
+import matplotlib.pyplot as plt
 
 from settings import configure, model_logger
 from dataset import CustomImageDataset, ProcessImage
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from prettytable import PrettyTable
-from metrics import recallAtK, createPR
+from metrics import recallAtK
 
 class VPRTempo(nn.Module):
     def __init__(self):
@@ -58,7 +59,7 @@ class VPRTempo(nn.Module):
         self.layer_counter = 0
 
         """
-        Define trainable layers here
+        Define sequential layers
         """
         self.add_layer(
             'feature_layer',
@@ -71,6 +72,16 @@ class VPRTempo(nn.Module):
             dims=[self.feature, self.output],
             device=self.device,
             inference=True
+        )
+        
+        # Define the forward pass
+        self.forward_pass = nn.Sequential(
+                self.feature_layer.w, # Pass input to the feature layer weights
+                nn.Hardtanh(0,0.9), # Clip feature spikes [0, 0.9]
+                nn.ReLU(), # Rectify feature spikes
+                self.output_layer.w, # Pass feature spikes to the output layer weights
+                nn.Hardtanh(0,0.9), # Clip output spikes [0, 0.9]
+                nn.ReLU() # Rectify output spikes
         )
         
     def add_layer(self, name, **kwargs):
@@ -110,12 +121,7 @@ class VPRTempo(nn.Module):
             # Set device
             spikes, labels = spikes.to(self.device), labels.to(self.device)
             # Pass through previous layers if they exist
-            if layers:
-                for layer_name in layers:
-                    layer = getattr(self, layer_name)
-                    spikes = self.forward(spikes, layer)
-                    spikes = bn.clamp_spikes(spikes, layer)
-
+            spikes = self.forward(spikes)
             # Add output spikes to list
             out.append(spikes.detach().cpu().tolist())
             pbar.update(1)
@@ -141,12 +147,16 @@ class VPRTempo(nn.Module):
         table.field_names = ["N", "1", "5", "10", "15", "20", "25"]
         table.add_row(["Recall", R[0], R[1], R[2], R[3], R[4], R[5]])
         model.logger.info(table)
+        
+        # Plot similarity matrix
+        plt.matshow(out)
+        plt.colorbar(shrink=0.75,label="Output spike intensity")
+        plt.title('Similarity matrix')
+        plt.xlabel("Query")
+        plt.ylabel("Database")
+        plt.show()
 
-        P, R = createPR(out,GThard=GT,matching="single")
-        print(P)
-        print(R)
-
-    def forward(self, spikes, layer):
+    def forward(self, spikes):
         """
         Compute the forward pass of the model.
     
@@ -157,7 +167,7 @@ class VPRTempo(nn.Module):
         - Tensor: Output after processing.
         """
         
-        spikes = layer.w(spikes)
+        spikes = self.forward_pass(spikes)
         
         return spikes
         
@@ -219,13 +229,12 @@ def run_inference(model, model_name):
 
     # Retrieve layer names for inference
     layer_names = list(model.layer_dict.keys())
-
+    # Ensure entire model is on the device
+    model.to(model.device)
     # Use evaluate method for inference accuracy
     model.evaluate(model, test_loader, layers=layer_names)
 
 if __name__ == "__main__":
-    # Set the number of threads for PyTorch
-    #torch.set_num_threads(8)
     # Initialize the model
     model = VPRTempo()
     if model.quantize:
